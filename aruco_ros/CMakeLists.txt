@@ -11,6 +11,9 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   tf
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
   aruco
   aruco_msgs
   sensor_msgs
@@ -26,7 +29,7 @@ add_compile_options(-std=c++11)
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES aruco_ros_utils
-  CATKIN_DEPENDS aruco sensor_msgs tf 
+  CATKIN_DEPENDS aruco sensor_msgs tf tf2 tf2_ros tf2_geometry_msgs
 )
 
 include_directories(

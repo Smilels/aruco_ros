@@ -42,9 +42,15 @@
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/image_encodings.h>
 #include <aruco_ros/aruco_ros_utils.h>
-#include <tf/transform_broadcaster.h>
-#include <tf/transform_listener.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_broadcaster.h>
+#include <geometry_msgs/TransformStamped.h>
 #include <visualization_msgs/Marker.h>
+
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Transform.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 #include <dynamic_reconfigure/server.h>
 #include <aruco_ros/ArucoThresholdConfig.h>
@@ -54,7 +60,7 @@ class ArucoSimple
 private:
   cv::Mat inImage;
   aruco::CameraParameters camParam;
-  tf::StampedTransform rightToLeft;
+  tf2::Stamped<tf2::Transform> rightToLeft;
   bool useRectifiedImages;
   aruco::MarkerDetector mDetector;
   std::vector<aruco::Marker> markers;
@@ -78,7 +84,10 @@ private:
   image_transport::ImageTransport it;
   image_transport::Subscriber image_sub;
 
-  tf::TransformListener _tfListener;
+  // tf::TransformListener _tfListener;
+  tf2_ros::Buffer tfBuffer;
+  tf2_ros::TransformListener tfListener{tfBuffer};
+  tf2_ros::TransformBroadcaster br;
 
   dynamic_reconfigure::Server<aruco_ros::ArucoThresholdConfig> dyn_rec_server;
 
@@ -155,32 +164,45 @@ public:
     dyn_rec_server.setCallback(boost::bind(&ArucoSimple::reconf_callback, this, _1, _2));
   }
 
-  bool getTransform(const std::string& refFrame, const std::string& childFrame, tf::StampedTransform& transform)
-  {
-    std::string errMsg;
+  // bool getTransform(const std::string& refFrame, const std::string& childFrame, tf2::StampedTransform& transform)
+  // {
+  //   std::string errMsg;
 
-    if (!_tfListener.waitForTransform(refFrame, childFrame, ros::Time(0), ros::Duration(0.5), ros::Duration(0.01),
-                                      &errMsg))
-    {
-      ROS_ERROR_STREAM("Unable to get pose from TF: " << errMsg);
-      return false;
-    }
-    else
-    {
-      try
-      {
-        _tfListener.lookupTransform(refFrame, childFrame, ros::Time(0), // get latest available
-                                    transform);
-      }
-      catch (const tf::TransformException& e)
-      {
-        ROS_ERROR_STREAM("Error in lookupTransform of " << childFrame << " in " << refFrame);
-        return false;
-      }
+  // while (node.ok()){
+  //   geometry_msgs::TransformStamped transformStamped;
+  //   try{
+  //     transformStamped = tfBuffer.lookupTransform(refFrame, childFrame,
+  //                              ros::Time(0));
+  //   }
+  //   catch (tf2::TransformException &ex) {
+  //     ROS_WARN("%s",ex.what());
+  //     ros::Duration(1.0).sleep();
+  //     continue;
+  //   }
 
-    }
-    return true;
-  }
+
+  //   // if (!_tfListener.lookupTransform(refFrame, childFrame, ros::Time(0), ros::Duration(0.5), ros::Duration(0.01),
+  //   //                                   &errMsg))
+  //   // {
+  //   //   ROS_ERROR_STREAM("Unable to get pose from TF: " << errMsg);
+  //   //   return false;
+  //   // }
+  //   // else
+  //   // {
+  //   //   try
+  //   //   {
+  //   //     _tfListener.lookupTransform(refFrame, childFrame, ros::Time(0), // get latest available
+  //   //                                 transform);
+  //   //   }
+  //   //   catch (const tf::TransformException& e)
+  //   //   {
+  //   //     ROS_ERROR_STREAM("Error in lookupTransform of " << childFrame << " in " << refFrame);
+  //   //     return false;
+  //   //   }
+
+  //   // }
+  //   return true;
+  // }
 
   void image_callback(const sensor_msgs::ImageConstPtr& msg)
   {
@@ -193,7 +215,6 @@ public:
       return;
     }
 
-    static tf::TransformBroadcaster br;
     if (cam_info_received)
     {
       ros::Time curr_stamp = msg->header.stamp;
@@ -213,37 +234,57 @@ public:
           // only publishing the selected marker
           if (markers[i].id == marker_id)
           {
-            tf::Transform transform = aruco_ros::arucoMarker2Tf(markers[i]);
+            tf2::Transform transform = aruco_ros::arucoMarker2Tf2(markers[i]);   
             tf::StampedTransform cameraToReference;
             cameraToReference.setIdentity();
 
-            if (reference_frame != camera_frame)
-            {
-              getTransform(reference_frame, camera_frame, cameraToReference);
-            }
+            // if (reference_frame != camera_frame)
+            // {
+            //   getTransform(reference_frame, camera_frame, cameraToReference);
+            // }
 
-            transform = static_cast<tf::Transform>(cameraToReference) * static_cast<tf::Transform>(rightToLeft)
-                * transform;
+            // transform = static_cast<tf::Transform>(cameraToReference) * static_cast<tf::Transform>(rightToLeft)
+            //     * transform;
+            transform = static_cast<tf2::Transform>(rightToLeft) * transform;
+            geometry_msgs::TransformStamped transformStamped;
+            transformStamped.transform.translation.x = transform.getOrigin().x();
+            transformStamped.transform.translation.y = transform.getOrigin().y();
+            transformStamped.transform.translation.z = transform.getOrigin().z();
+            transformStamped.transform.rotation.x = transform.getRotation().x();
+            transformStamped.transform.rotation.y = transform.getRotation().y();
+            transformStamped.transform.rotation.z = transform.getRotation().z();
+            transformStamped.transform.rotation.w = transform.getRotation().w();
+            transformStamped.header.stamp = curr_stamp;
+            transformStamped.header.frame_id = reference_frame;
+            transformStamped.child_frame_id = marker_frame;
+            // br.sendTransform(transformStamped);
+            // // tf::StampedTransform stampedTransform(transform, curr_stamp, reference_frame, marker_frame);
+            br.sendTransform(transformStamped);
 
-            tf::StampedTransform stampedTransform(transform, curr_stamp, reference_frame, marker_frame);
-            br.sendTransform(stampedTransform);
             geometry_msgs::PoseStamped poseMsg;
-            tf::poseTFToMsg(transform, poseMsg.pose);
+            // tf2::toMsg(transform, poseMsg.pose);
             poseMsg.header.frame_id = reference_frame;
             poseMsg.header.stamp = curr_stamp;
+            poseMsg.pose.position.x = transform.getOrigin().x();
+            poseMsg.pose.position.y = transform.getOrigin().y();
+            poseMsg.pose.position.z = transform.getOrigin().z();
+            poseMsg.pose.orientation.x = transform.getRotation().x();
+            poseMsg.pose.orientation.y = transform.getRotation().y();
+            poseMsg.pose.orientation.z = transform.getRotation().z();
+            poseMsg.pose.orientation.w = transform.getRotation().w();
             pose_pub.publish(poseMsg);
 
-            geometry_msgs::TransformStamped transformMsg;
-            tf::transformStampedTFToMsg(stampedTransform, transformMsg);
-            transform_pub.publish(transformMsg);
+            // geometry_msgs::TransformStamped transformMsg;
+            // tf::transformStampedTFToMsg(stampedTransform, transformMsg);
+            transform_pub.publish(transformStamped);
 
             geometry_msgs::Vector3Stamped positionMsg;
-            positionMsg.header = transformMsg.header;
-            positionMsg.vector = transformMsg.transform.translation;
+            positionMsg.header = transformStamped.header;
+            positionMsg.vector = transformStamped.transform.translation;
             position_pub.publish(positionMsg);
 
             geometry_msgs::PointStamped pixelMsg;
-            pixelMsg.header = transformMsg.header;
+            pixelMsg.header = transformStamped.header;
             pixelMsg.point.x = markers[i].getCenter().x;
             pixelMsg.point.y = markers[i].getCenter().y;
             pixelMsg.point.z = 0;
@@ -251,7 +292,7 @@ public:
 
             // publish rviz marker representing the ArUco marker patch
             visualization_msgs::Marker visMarker;
-            visMarker.header = transformMsg.header;
+            visMarker.header = transformStamped.header;
             visMarker.id = 1;
             visMarker.type = visualization_msgs::Marker::CUBE;
             visMarker.action = visualization_msgs::Marker::ADD;
@@ -265,7 +306,6 @@ public:
             visMarker.color.a = 1.0;
             visMarker.lifetime = ros::Duration(3.0);
             marker_pub.publish(visMarker);
-
           }
           // but drawing all the detected markers
           markers[i].draw(inImage, cv::Scalar(0, 0, 255), 2);
@@ -316,7 +356,7 @@ public:
     // handle cartesian offset between stereo pairs
     // see the sensor_msgs/CameraInfo documentation for details
     rightToLeft.setIdentity();
-    rightToLeft.setOrigin(tf::Vector3(-msg.P[3] / msg.P[0], -msg.P[7] / msg.P[5], 0.0));
+    rightToLeft.setOrigin(tf2::Vector3(-msg.P[3] / msg.P[0], -msg.P[7] / msg.P[5], 0.0));
 
     cam_info_received = true;
     cam_info_sub.shutdown();
